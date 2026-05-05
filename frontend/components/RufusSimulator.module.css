@@ -1,0 +1,174 @@
+.wrapper {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.75rem;
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.rufusAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gradient-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.125rem;
+  color: white;
+  box-shadow: var(--shadow-btn);
+}
+
+.rufusName {
+  font-weight: 700;
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+}
+
+.rufusSubtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.streaming {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--accent-emerald);
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.1);
+  padding: 0.25rem 0.75rem;
+  border-radius: 100px;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.response {
+  padding: 1.5rem 1.75rem;
+  min-height: 120px;
+}
+
+.responseText {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.responseText h1, .responseText h2, .responseText h3 {
+  color: var(--text-primary);
+  margin: 1.5rem 0 1rem;
+  font-weight: 700;
+}
+
+.responseText p {
+  margin-bottom: 1.25rem;
+}
+
+.responseText ul, .responseText ol {
+  margin-bottom: 1.25rem;
+  padding-left: 1.5rem;
+}
+
+.responseText li {
+  margin-bottom: 0.5rem;
+}
+
+/* Premium Table Styling — wrapped in overflow-x:auto container */
+.tableWrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 1.5rem 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-card);
+}
+
+.responseText table {
+  width: 100%;
+  min-width: 520px; /* Prevents columns getting crushed below readable width */
+  border-collapse: separate;
+  border-spacing: 0;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: 0;
+}
+
+.responseText th {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--text-primary);
+  font-weight: 700;
+  text-align: left;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--border-card);
+}
+
+/* Ensure the first column (usually "Feature" or labels) has enough room */
+.responseText td:first-child,
+.responseText th:first-child {
+  min-width: 140px;
+  background: rgba(255, 255, 255, 0.01);
+  font-weight: 600;
+}
+
+.responseText td {
+  padding: 0.75rem 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: top;
+  min-width: 120px;
+  word-break: normal; /* Keep cells tidy, wrapper handles overflow */
+}
+
+.responseText tr:last-child td {
+  border-bottom: none;
+}
+
+.responseText tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.responseText strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cursor {
+  display: inline-block;
+  color: var(--accent-primary);
+  font-weight: 300;
+  animation: blink 0.8s step-end infinite;
+  margin-left: 1px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+}
