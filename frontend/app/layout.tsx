@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Rufus Twin — Amazon AEO Diagnostics Platform",
   description:
-    "Reverse-engineer how Amazon Rufus AI sees your product listing. Get a full AEO report card, competitor gap analysis, and market size estimate — powered by Claude 3.5 Sonnet.",
+    "Reverse-engineer how Amazon Rufus AI sees your product listing. Get a full AEO report card, competitor gap analysis, and market size estimate — powered by Gemini 2.5 Flash.",
   keywords: [
     "Amazon Rufus",
     "AEO",

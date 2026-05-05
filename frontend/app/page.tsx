@@ -22,7 +22,7 @@ export default function HomePage() {
         <section className={styles.hero}>
           <div className={`badge badge-info ${styles.heroBadge}`}>
             <span className="pulse-dot" />
-            Powered by Claude 3.5 Sonnet
+            Powered by Gemini 2.5 Flash
           </div>
           <h1 className={styles.heroTitle}>
             See Your Product Through{" "}
@@ -37,7 +37,7 @@ export default function HomePage() {
           <div className={styles.stats}>
             {[
               { value: "2 APIs", label: "Data Sources" },
-              { value: "Claude", label: "AI Engine" },
+              { value: "Gemini", label: "AI Engine" },
               { value: "AEO", label: "Report Card" },
               { value: "~30s", label: "Analysis Time" },
             ].map((stat) => (
@@ -72,7 +72,7 @@ export default function HomePage() {
               {
                 num: "02",
                 title: "Simulate",
-                desc: "Claude 3.5 Sonnet evaluates your product exactly as Rufus would.",
+                desc: "Gemini 2.5 Flash evaluates your product exactly as Rufus would.",
               },
               {
                 num: "03",
@@ -92,7 +92,7 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className={styles.footer}>
-        <p>Built with Claude 3.5 Sonnet + Apify · Not affiliated with Amazon</p>
+        <p>Built with Gemini 2.5 Flash · Rainforest API · Voyage AI · Not affiliated with Amazon</p>
       </footer>
     </main>
   );
