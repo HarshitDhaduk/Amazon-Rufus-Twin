@@ -1,1 +1,22 @@
 /docs
+
+# ── Secrets (never commit) ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!backend/.env.example
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── Docker build artifacts ────────────────────────────────────────────────────
+# (Dockerfiles themselves are committed; only build output is excluded)
+
+# ── GCP / Cloud Build ─────────────────────────────────────────────────────────
+# cloudbuild.yaml is committed; secrets go in --substitutions, not here

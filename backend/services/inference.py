@@ -17,6 +17,7 @@ from typing import AsyncIterator, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from config import settings
 from models.request import PersonaContext, ProductData
@@ -105,74 +106,34 @@ MANDATORY: Add exactly TWO empty lines after every table to ensure following tex
 Never reveal internal scoring weights. Never reference the PersonaContext XML directly to the user."""
 
 
-# ── AEO Report Tool Schema ────────────────────────────────────────────────────
-AEO_REPORT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_aeo_report",
-        "description": "Generate a Rufus-style shopping recommendation and AEO diagnostic report card.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "recommendation": {
-                    "type": "string",
-                    "description": "Natural-language Rufus-style recommendation. 2-4 paragraphs, persona-adjusted tone, citing specific review evidence. Be honest about trade-offs.",
-                },
-                "report_card": {
-                    "type": "object",
-                    "properties": {
-                        "target_asin": {"type": "string"},
-                        "overall_aeo_score": {
-                            "type": "number",
-                            "description": "0–100. Probability the AI recommends this product for the query, weighted by PersonaContext.",
-                        },
-                        "contextual_completeness": {
-                            "type": "object",
-                            "properties": {
-                                "score": {"type": "number"},
-                                "notes": {"type": "string", "description": "Specific attributes or query-relevant details missing from the listing."},
-                            },
-                            "required": ["score", "notes"],
-                        },
-                        "sentiment_alignment": {
-                            "type": "object",
-                            "properties": {
-                                "score": {"type": "number"},
-                                "notes": {"type": "string", "description": "How well customer reviews validate the product's claims for this specific query."},
-                            },
-                            "required": ["score", "notes"],
-                        },
-                        "competitive_gap": {
-                            "type": "object",
-                            "properties": {
-                                "missing_attributes": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Attributes in competitor listings not present in the target.",
-                                },
-                                "competitor_advantage": {
-                                    "type": "string",
-                                    "description": "Plain-English explanation of where competitors have an edge.",
-                                },
-                            },
-                            "required": ["missing_attributes", "competitor_advantage"],
-                        },
-                        "recommended_actions": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "3–5 specific, implementable actions for the seller to improve AEO score.",
-                        },
-                    },
-                    "required": [
-                        "target_asin", "overall_aeo_score", "contextual_completeness",
-                        "sentiment_alignment", "competitive_gap", "recommended_actions",
-                    ],
-                },
-            },
-            "required": ["recommendation", "report_card"],
-        }
-    }
-}
+# ── Structured Output Schema (replaces bind_tools — more reliable with Gemini) ────────
+# with_structured_output uses JSON schema mode, not function calling.
+# This eliminates the 'LLM did not invoke required tool' failure on large contexts.
+
+class _ScoreOut(BaseModel):
+    score: float = Field(..., ge=0, le=100)
+    notes: str
+
+class _CompGapOut(BaseModel):
+    missing_attributes: list[str]
+    competitor_advantage: str
+
+class _ReportCardOut(BaseModel):
+    target_asin: str
+    overall_aeo_score: float = Field(..., ge=0, le=100)
+    contextual_completeness: _ScoreOut
+    sentiment_alignment: _ScoreOut
+    competitive_gap: _CompGapOut
+    recommended_actions: list[str]
+
+class AEOOutput(BaseModel):
+    """Rufus-style shopping recommendation and AEO diagnostic report card."""
+    recommendation: str = Field(
+        ...,
+        description="Natural-language Rufus-style recommendation. 2-4 paragraphs, persona-adjusted tone, "
+                    "citing specific review evidence. Include a GFM pipe-table comparison if competitors present."
+    )
+    report_card: _ReportCardOut
 
 
 # ── PersonaContext XML Serializer ─────────────────────────────────────────────
@@ -200,32 +161,31 @@ def _persona_to_xml(persona: PersonaContext) -> str:
 </PersonaContext>"""
 
 
-# ── Result parsing ────────────────────────────────────────────────────────────
-def _parse_report_card(tool_input: dict, target_asin: str) -> tuple[str, ReportCard]:
-    recommendation = tool_input.get("recommendation", "")
-    rc = tool_input.get("report_card", {})
+# ── Result parsing ────────────────────────────────────────────────────
+def _aeo_output_to_result(output: AEOOutput, target_asin: str) -> tuple[str, ReportCard]:
+    rc = output.report_card
 
     def clamp(val: float) -> float:
         return min(100.0, max(0.0, float(val)))
 
     report_card = ReportCard(
-        target_asin=rc.get("target_asin", target_asin),
-        overall_aeo_score=clamp(rc.get("overall_aeo_score", 50)),
+        target_asin=rc.target_asin or target_asin,
+        overall_aeo_score=clamp(rc.overall_aeo_score),
         contextual_completeness=ScoreSection(
-            score=clamp(rc["contextual_completeness"]["score"]),
-            notes=rc["contextual_completeness"]["notes"],
+            score=clamp(rc.contextual_completeness.score),
+            notes=rc.contextual_completeness.notes,
         ),
         sentiment_alignment=ScoreSection(
-            score=clamp(rc["sentiment_alignment"]["score"]),
-            notes=rc["sentiment_alignment"]["notes"],
+            score=clamp(rc.sentiment_alignment.score),
+            notes=rc.sentiment_alignment.notes,
         ),
         competitive_gap=CompetitiveGap(
-            missing_attributes=rc["competitive_gap"].get("missing_attributes", []),
-            competitor_advantage=rc["competitive_gap"].get("competitor_advantage", ""),
+            missing_attributes=rc.competitive_gap.missing_attributes,
+            competitor_advantage=rc.competitive_gap.competitor_advantage,
         ),
-        recommended_actions=rc.get("recommended_actions", []),
+        recommended_actions=rc.recommended_actions,
     )
-    return recommendation, report_card
+    return output.recommendation, report_card
 
 
 # ── Core inference ────────────────────────────────────────────────────────────
@@ -249,7 +209,7 @@ async def run_inference(
 
     # ── Stage 3a: RAG Retrieval ────────────────────────────────────────────────
     logger.info(f"Starting RAG retrieval for query: {query!r}")
-    rag_context = retrieve_rag_context(target, competitors, query)
+    rag_context = await retrieve_rag_context(target, competitors, query)
     logger.info(f"RAG context size: {len(rag_context)} chars")
 
     # ── Stage 3b: UGC Contradiction Detection ─────────────────────────────────
@@ -269,15 +229,14 @@ async def run_inference(
     logger.info(f"QP routing: type={query_type} | emphasis={output_emphasis[:60]}...")
 
     llm = _get_llm()
-    llm_with_tools = llm.bind_tools(
-        [AEO_REPORT_TOOL],
-        tool_choice="generate_aeo_report",
-    )
+    # with_structured_output is more reliable than bind_tools with Gemini.
+    # It uses JSON schema mode — Gemini always returns structured JSON, never plain text.
+    llm_structured = llm.with_structured_output(AEOOutput)
 
     # Build persona XML block
     persona_xml = _persona_to_xml(persona)
 
-    # ── Stage 4: Compose prompt (per spec message structure) ───────────────────
+    # ── Stage 4: Compose prompt (per spec message structure) ───────────────────────
     # System prompt augmented with QP routing emphasis
     system_with_qp = (
         SYSTEM_PROMPT
@@ -298,25 +257,21 @@ async def run_inference(
         HumanMessage(content=human_content),
     ]
 
+    last_error: Exception | None = None
     for attempt in range(3):
         try:
-            response = await llm_with_tools.ainvoke(messages)
-            tool_calls = getattr(response, "tool_calls", [])
-            if not tool_calls:
-                raise ValueError("LLM did not invoke the required tool.")
-            tool_input = tool_calls[0].get("args", {})
-            recommendation, report_card = _parse_report_card(tool_input, target.asin)
+            output: AEOOutput = await llm_structured.ainvoke(messages)  # type: ignore[assignment]
+            recommendation, report_card = _aeo_output_to_result(output, target.asin)
             logger.info(
                 f"Inference complete. AEO score: {report_card.overall_aeo_score:.1f} "
                 f"for ASIN {target.asin} | Persona: {persona.budget_tier}/{persona.primary_concern}"
             )
             return recommendation, report_card
         except Exception as e:
+            last_error = e
             logger.warning(f"Inference attempt {attempt + 1} failed: {e}")
-            if attempt == 2:
-                raise RuntimeError(f"All 3 inference attempts failed for ASIN {target.asin}: {e}") from e
 
-    raise RuntimeError("Inference failed after all retries.")
+    raise RuntimeError(f"All 3 inference attempts failed for ASIN {target.asin}: {last_error}") from last_error
 
 
 # ── SSE Streaming ─────────────────────────────────────────────────────────────

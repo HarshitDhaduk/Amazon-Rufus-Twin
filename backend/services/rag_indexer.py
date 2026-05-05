@@ -19,6 +19,7 @@ Cache: each ASIN collection is persisted to disk with a 24h TTL.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -32,6 +33,31 @@ from config import settings
 from models.request import ProductData
 
 logger = logging.getLogger(__name__)
+
+# ── Voyage rate-limit guard ────────────────────────────────────────────────────
+# Free tier: 3 RPM. BOTH indexing (embed_documents) and retrieval (embed_query)
+# count against this limit. With 4 products that’s 8 calls per request.
+# 22s between ANY Voyage call keeps us safely under 3 per minute.
+_VOYAGE_CALL_DELAY = 22  # seconds
+_last_voyage_call: float = 0.0
+
+async def _voyage_call_guard() -> None:
+    """Yield control to the event loop, then wait until safe to make the next Voyage API call.
+    
+    Uses asyncio.sleep (non-blocking) instead of time.sleep so FastAPI can
+    serve other requests during the rate-limit wait window.
+
+    Must be called before EVERY Voyage embed call:
+      - build_or_load_store: embed_documents (indexing)
+      - retrieve_rag_context: embed_query (retrieval)
+    """
+    global _last_voyage_call
+    elapsed = time.time() - _last_voyage_call
+    if elapsed < _VOYAGE_CALL_DELAY:
+        wait = _VOYAGE_CALL_DELAY - elapsed
+        logger.info(f"Voyage rate-limit guard: waiting {wait:.1f}s before next Voyage call")
+        await asyncio.sleep(wait)  # non-blocking — yields event loop to other requests
+    _last_voyage_call = time.time()
 
 # ── Storage ────────────────────────────────────────────────────────────────────
 CHROMA_DIR = Path(__file__).parent.parent / "data" / "chroma_db"
@@ -150,17 +176,19 @@ def _collection_is_fresh(client: chromadb.PersistentClient, name: str) -> bool:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def build_or_load_store(product: ProductData, role: str) -> Chroma:
+async def build_or_load_store(product: ProductData, role: str) -> Chroma:
     """
     Build (or load from 24h cache) a LangChain Chroma vector store for one product.
     Uses Voyage AI voyage-3-large embeddings.
+    Respects the 3 RPM free-tier by rate-limiting between indexing calls.
+    Async so the rate-limit guard can yield the event loop during waits.
     """
     client = _get_chroma_client()
-    embeddings = _get_embeddings()
     col_name = _collection_name(product.asin)
 
     if _collection_is_fresh(client, col_name):
         logger.info(f"Cache hit: loading existing index for {product.asin}")
+        embeddings = _get_embeddings()
         return Chroma(
             client=client,
             collection_name=col_name,
@@ -174,12 +202,16 @@ def build_or_load_store(product: ProductData, role: str) -> Chroma:
     except Exception:
         pass
 
+    # Rate-limit: await asyncio.sleep (non-blocking) before hitting Voyage API
+    await _voyage_call_guard()
+
+    embeddings = _get_embeddings()
+
     # Build fresh documents and ingest into Chroma
     logger.info(f"Building new index for {product.asin} (role={role})…")
     documents = _build_documents(product, role)
 
     # Create collection with metadata for TTL tracking
-    # Only set indexed_at if it's a real product, so stubs don't get cached for 24h
     meta = {"asin": product.asin, "role": role}
     if not product.title.startswith("[Extraction failed"):
         meta["indexed_at"] = str(time.time())
@@ -199,7 +231,7 @@ def build_or_load_store(product: ProductData, role: str) -> Chroma:
     return store
 
 
-def retrieve_rag_context(
+async def retrieve_rag_context(
     target: ProductData,
     competitors: list[ProductData],
     query: str,
@@ -235,11 +267,13 @@ def retrieve_rag_context(
 
     for role, product in all_products:
         try:
-            store = build_or_load_store(product, role)
+            store = await build_or_load_store(product, role)
             retriever = store.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": top_k},
             )
+            # Guard before embed_query — retrieval also hits Voyage API (counts vs 3 RPM)
+            await _voyage_call_guard()
             docs = retriever.invoke(query)
 
             if not docs:
@@ -264,6 +298,14 @@ def retrieve_rag_context(
                 for d in reviews[:6]:
                     context_parts.append(f"      <review>{d.page_content}</review>")
                 context_parts.append("    </reviews>")
+            elif product.reviews:
+                # RAG returned no review chunks (e.g. only listing was indexed)
+                # Inject raw reviews directly so LLM can compute sentiment alignment
+                logger.info(f"Injecting {min(len(product.reviews), 8)} raw reviews for {asin} (no RAG chunks)")
+                context_parts.append("    <reviews>")
+                for i, rev in enumerate(product.reviews[:8]):
+                    context_parts.append(f"      <review>Customer Review #{i+1}: {rev[:600]}</review>")
+                context_parts.append("    </reviews>")
 
             # Q&A relevant to query intent
             if qa_items:
@@ -282,9 +324,17 @@ def retrieve_rag_context(
 
         except Exception as e:
             logger.error(f"RAG retrieval failed for {product.asin}: {e}", exc_info=True)
-            # Fallback: include raw listing only
-            context_parts.append(f'  <product asin="{product.asin}" role="{role}">')
-            context_parts.append(f"    <listing>\n{product.title}\n{product.description[:1000]}\n    </listing>")
+            # Fallback: include raw listing + all available reviews directly
+            asin = product.asin
+            context_parts.append(f'  <product asin="{asin}" role="{role}">')
+            listing_text = f"{product.title}\n\n{chr(10).join(product.bullet_points)}\n\n{product.description[:1000]}"
+            context_parts.append(f"    <listing>\n{listing_text}\n    </listing>")
+            if product.reviews:
+                logger.info(f"Fallback: injecting {min(len(product.reviews), 8)} raw reviews for {asin}")
+                context_parts.append("    <reviews>")
+                for i, rev in enumerate(product.reviews[:8]):
+                    context_parts.append(f"      <review>Customer Review #{i+1}: {rev[:600]}</review>")
+                context_parts.append("    </reviews>")
             context_parts.append("  </product>")
             context_parts.append("")
 

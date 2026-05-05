@@ -66,7 +66,7 @@ async def generate_dataset():
                 product = await extract_asin_data(asin)
                 
                 # 2. Get RAG Context (chunks, embeds, caches, and retrieves)
-                context_xml = retrieve_rag_context(product, [], USER_QUERY)
+                context_xml = await retrieve_rag_context(product, [], USER_QUERY)
                 
                 # 3. Construct the exact prompt the model will see in production
                 full_input = f"{SYSTEM_PROMPT}\n\nContext:\n{context_xml}\n\nUser Query: {USER_QUERY}"

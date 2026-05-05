@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files (secrets — never in image)
+.env
+.env.*
+!.env.example
+
+# ChromaDB data (ephemeral on Cloud Run — rebuilt at runtime)
+data/chroma_db/
+data/*.jsonl
+
+# Development / testing
+scratch/
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp

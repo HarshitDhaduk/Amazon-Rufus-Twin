@@ -70,7 +70,8 @@ function AnalyzePage() {
   const competitors = params.get("competitors")?.split(",").filter(Boolean) ?? [];
   const query = params.get("query") ?? "";
   const includeMarket = params.get("market") !== "false";
-  const includeCompetitors = params.get("competitors_auto") === "true";
+  // Default true: QP routing will force competitor discovery for comparison/planning queries
+  const includeCompetitors = params.get("competitors_auto") !== "false";
   const chosenCurrency = params.get("currency") ?? "USD";
   const profileUrl = params.get("profile_url") ?? undefined;
 

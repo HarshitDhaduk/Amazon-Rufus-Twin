@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Required for Docker/Cloud Run deployment.
+  // Produces a self-contained server in .next/standalone/
+  output: "standalone",
 };
 
 export default nextConfig;

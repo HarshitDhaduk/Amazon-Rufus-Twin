@@ -6,10 +6,7 @@ pydantic-settings>=2.9
 python-dotenv>=1.0
 httpx>=0.28
 
-# Anthropic raw SDK (kept for compatibility)
-anthropic>=0.52
-
-# LangChain RAG stack
+# LangChain RAG stack (Gemini + ChromaDB + Voyage AI)
 langchain>=0.3
 langchain-core>=0.3
 langchain-google-genai>=1.0

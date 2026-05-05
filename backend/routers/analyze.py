@@ -64,16 +64,23 @@ async def _build_persona(req: AnalyzeRequest) -> PersonaContext:
 async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     """
     Full pipeline — returns complete analysis in a single JSON response.
+    Follows the same 6-stage order as analyze_stream.
     """
     logger.info(f"Analyze: target={req.target_asin}")
 
-    # Stages 1+2: Build PersonaContext
-    persona = await _build_persona(req)
+    # Stages 1+2: Persona synthesis + Query Planner run concurrently
+    persona_task = asyncio.create_task(_build_persona(req))
+    qp_task = asyncio.create_task(classify_query(req.query))
+    persona, (query_type, routing) = await asyncio.gather(persona_task, qp_task)
     currency = persona.currency
 
-    # Stage 3: Extract products
+    # Stage 3: Extract products — QP routing override for competitor discovery
+    qp_needs_competitors = routing.get("require_competitors", False)
     all_asins = [req.target_asin] + req.competitor_asins
-    if req.include_competitors and not req.competitor_asins:
+    if not req.competitor_asins and (req.include_competitors or qp_needs_competitors):
+        logger.info(
+            f"Auto-discovering competitors | reason={'QP:' + query_type if qp_needs_competitors else 'user flag'} | market={persona.detected_market}"
+        )
         discovered = await search_competitors(req.query, persona.detected_market)
         discovered = [a for a in discovered if a != req.target_asin][:3]
         all_asins += discovered
@@ -82,20 +89,20 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     target = all_products[0]
     competitors = all_products[1:]
 
-    # Stage 4: Market size
+    # Stage 4+5: Inference (must run before market estimation per spec)
+    try:
+        recommendation, report_card = await run_inference(target, competitors, req.query, persona)
+    except Exception as e:
+        logger.error(f"Inference failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI inference failed: {str(e)}")
+
+    # Stage 6 hydration: Market size runs AFTER inference (non-fatal)
     market_estimate = None
     if req.include_market_size:
         try:
             market_estimate = estimate_market_size(all_products, currency=currency)
         except Exception as e:
             logger.warning(f"Market size estimation failed (non-fatal): {e}")
-
-    # Stage 5+6: Inference
-    try:
-        recommendation, report_card = await run_inference(target, competitors, req.query, persona)
-    except Exception as e:
-        logger.error(f"Inference failed: {e}")
-        raise HTTPException(status_code=502, detail=f"AI inference failed: {str(e)}")
 
     return AnalyzeResponse(
         recommendation=recommendation,
@@ -127,12 +134,18 @@ async def analyze_stream(req: AnalyzeRequest) -> StreamingResponse:
     logger.info(f"Pipeline ready | persona={persona.budget_tier}/{persona.primary_concern} | qp={query_type}")
 
     # Stage 3: Extract products
+    # QP routing override: if QP classifies as comparison/planning, competitors are mandatory.
+    # Auto-discover them if none were provided — regardless of the frontend flag.
+    qp_needs_competitors = routing.get("require_competitors", False)
     all_asins = [req.target_asin] + req.competitor_asins
-    if req.include_competitors and not req.competitor_asins:
-        logger.info(f"Auto-discovering competitors on {persona.detected_market}")
+    if not req.competitor_asins and (req.include_competitors or qp_needs_competitors):
+        logger.info(
+            f"Auto-discovering competitors | reason={'QP:' + query_type if qp_needs_competitors else 'user flag'} | market={persona.detected_market}"
+        )
         discovered = await search_competitors(req.query, persona.detected_market)
         discovered = [a for a in discovered if a != req.target_asin][:3]
         all_asins += discovered
+        logger.info(f"Discovered {len(discovered)} competitor(s): {discovered}")
 
     all_products = await extract_multiple(all_asins)
     target = all_products[0]

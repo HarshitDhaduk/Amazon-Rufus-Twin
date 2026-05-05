@@ -1,0 +1,152 @@
+steps:
+  # ═══════════════════════════════════════════════════════
+  #  BACKEND
+  # ═══════════════════════════════════════════════════════
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-backend'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/rufus-backend:latest'
+      - './backend'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-backend'
+    waitFor: ['build-backend']
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/rufus-backend'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-backend'
+    waitFor: ['push-backend']
+    entrypoint: bash
+    secretEnv:
+      - GOOGLE_API_KEY
+      - VOYAGE_API_KEY
+      - RAINFOREST_API_KEY
+      - APIFY_API_TOKEN
+    args:
+      - '-c'
+      - |
+        gcloud run deploy rufus-backend \
+          --image=gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=1 \
+          --max-instances=3 \
+          --memory=2Gi \
+          --cpu=1 \
+          --timeout=3600 \
+          --concurrency=10 \
+          --set-env-vars="GOOGLE_API_KEY=$$GOOGLE_API_KEY,VOYAGE_API_KEY=$$VOYAGE_API_KEY,RAINFOREST_API_KEY=$$RAINFOREST_API_KEY,APIFY_API_TOKEN=$$APIFY_API_TOKEN,AMAZON_DOMAIN=${_AMAZON_DOMAIN},ALLOWED_ORIGINS=*"
+
+  # Fetch the live backend URL and write to workspace so frontend can use it
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'get-backend-url'
+    waitFor: ['deploy-backend']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe rufus-backend \
+          --region=${_REGION} --format='value(status.url)')
+        echo -n "$$BACKEND_URL" > /workspace/backend_url.txt
+        echo "Backend URL resolved: $$BACKEND_URL"
+
+  # ═══════════════════════════════════════════════════════
+  #  FRONTEND
+  #  NEXT_PUBLIC_API_URL must be injected at build time
+  #  (Next.js inlines NEXT_PUBLIC_ vars during `npm run build`)
+  # ═══════════════════════════════════════════════════════
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-frontend'
+    waitFor: ['get-backend-url']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(cat /workspace/backend_url.txt)
+        echo "Building frontend with NEXT_PUBLIC_API_URL=$$BACKEND_URL"
+        docker build \
+          --build-arg NEXT_PUBLIC_API_URL="$$BACKEND_URL" \
+          -t gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA \
+          -t gcr.io/$PROJECT_ID/rufus-frontend:latest \
+          ./frontend
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-frontend'
+    waitFor: ['build-frontend']
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/rufus-frontend'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-frontend'
+    waitFor: ['push-frontend']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(cat /workspace/backend_url.txt)
+        gcloud run deploy rufus-frontend \
+          --image=gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=0 \
+          --max-instances=5 \
+          --memory=512Mi \
+          --timeout=60 \
+          --set-env-vars="NEXT_PUBLIC_API_URL=$$BACKEND_URL"
+
+  # Tighten CORS: only allow the live frontend URL
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'tighten-cors'
+    waitFor: ['deploy-frontend']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        FRONTEND_URL=$(gcloud run services describe rufus-frontend \
+          --region=${_REGION} --format='value(status.url)')
+        gcloud run services update rufus-backend \
+          --region=${_REGION} \
+          --update-env-vars="ALLOWED_ORIGINS=$$FRONTEND_URL"
+        echo "CORS locked to: $$FRONTEND_URL"
+
+# ── Persist tagged images ──────────────────────────────────────────────────────
+images:
+  - 'gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/rufus-backend:latest'
+  - 'gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/rufus-frontend:latest'
+
+# ── Substitution defaults (override in trigger UI) ────────────────────────────
+substitutions:
+  _REGION: asia-south1
+  _AMAZON_DOMAIN: amazon.in
+
+# ── Pull secrets from Secret Manager (never commit keys to source control) ────
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/rufus-google-api-key/versions/latest
+      env: GOOGLE_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/rufus-voyage-api-key/versions/latest
+      env: VOYAGE_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/rufus-rainforest-api-key/versions/latest
+      env: RAINFOREST_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/rufus-apify-token/versions/latest
+      env: APIFY_API_TOKEN
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '3600s'

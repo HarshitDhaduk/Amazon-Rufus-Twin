@@ -189,8 +189,10 @@ async def _extract_via_rainforest(asin: str, api_key: str) -> ProductData:
             
         product = prod_data["product"]
         
-        # Extract Reviews
+        # Extract Reviews — try dedicated endpoint first, retry once on 503
         reviews = []
+        rev_success = False
+
         if not isinstance(rev_resp, Exception) and rev_resp.status_code == 200:
             try:
                 rev_data = rev_resp.json()
@@ -198,18 +200,88 @@ async def _extract_via_rainforest(asin: str, api_key: str) -> ProductData:
                     text = r.get("body") or r.get("title")
                     if text:
                         reviews.append(text)
+                if reviews:
+                    rev_success = True
+                    logger.info(f"Rainforest /reviews: fetched {len(reviews)} reviews for {asin}")
             except Exception as e:
                 logger.warning(f"Failed to parse Rainforest reviews payload: {e}")
         else:
             status = rev_resp.status_code if not isinstance(rev_resp, Exception) else str(rev_resp)
-            logger.warning(f"Rainforest reviews endpoint failed or returned {status}. Falling back to top_reviews.")
-            
-        # Fallback to top_reviews from product endpoint if reviews endpoint failed/empty
+            logger.warning(f"Rainforest /reviews returned {status} for {asin}. Will retry once.")
+
+        # Retry the reviews endpoint once if first attempt failed (503 is transient)
+        if not rev_success:
+            try:
+                await asyncio.sleep(3)
+                logger.info(f"Retrying /reviews endpoint for {asin}...")
+                async with httpx.AsyncClient(timeout=45) as retry_client:
+                    retry_resp = await retry_client.get(base_url, params=params_reviews)
+                if retry_resp.status_code == 200:
+                    rev_data = retry_resp.json()
+                    for r in rev_data.get("reviews", []):
+                        text = r.get("body") or r.get("title")
+                        if text:
+                            reviews.append(text)
+                    if reviews:
+                        rev_success = True
+                        logger.info(f"Rainforest /reviews retry: fetched {len(reviews)} reviews for {asin}")
+                else:
+                    logger.warning(f"Rainforest /reviews retry also failed ({retry_resp.status_code}) for {asin}")
+            except Exception as e:
+                logger.warning(f"Rainforest /reviews retry exception for {asin}: {e}")
+
+        # Fallback: extract from inline top_reviews / customer_reviews on the product page
         if not reviews:
-            for r in product.get("top_reviews", []):
-                text = r.get("body") or r.get("title")
+            inline_reviews = product.get("top_reviews") or product.get("customer_reviews") or []
+            logger.info(
+                f"Falling back to inline reviews for {asin}: "
+                f"top_reviews={len(product.get('top_reviews') or [])}, "
+                f"customer_reviews={len(product.get('customer_reviews') or [])}"
+            )
+
+            # Log first item keys to diagnose schema differences (amazon.in vs amazon.com)
+            if inline_reviews and isinstance(inline_reviews[0], dict):
+                logger.info(f"top_reviews[0] keys for {asin}: {list(inline_reviews[0].keys())}")
+
+            for r in inline_reviews:
+                text = ""
+                if isinstance(r, dict):
+                    # All known Rainforest field names across domains/product types:
+                    # amazon.com product: body (str), title (str)
+                    # amazon.in product:  body may be a dict {"value": "..."}
+                    # Others:             review_text, content, text, review, comment
+                    for key in ("body", "title", "review_text", "content", "text", "review", "comment", "description"):
+                        raw = r.get(key)
+                        if raw is None:
+                            continue
+                        if isinstance(raw, str) and raw.strip():
+                            text = raw.strip()
+                            break
+                        # Handle nested: {"value": "..."} or {"text": "..."}
+                        if isinstance(raw, dict):
+                            for subkey in ("value", "text", "body", "content"):
+                                sub = raw.get(subkey)
+                                if sub and isinstance(sub, str) and sub.strip():
+                                    text = sub.strip()
+                                    break
+                        if text:
+                            break
+                elif isinstance(r, str) and r.strip():
+                    text = r.strip()
+
                 if text:
                     reviews.append(text)
+
+            if reviews:
+                logger.info(f"Inline review fallback: got {len(reviews)} reviews for {asin}")
+            else:
+                # Dump first item so we can map the schema in the next fix iteration
+                first_item_dump = str(inline_reviews[0])[:400] if inline_reviews else "empty list"
+                logger.warning(
+                    f"No reviews found for {asin} from any source. "
+                    f"Review-related product keys: {[k for k in product.keys() if 'review' in k.lower() or 'rating' in k.lower()]}. "
+                    f"First top_reviews item sample: {first_item_dump}"
+                )
                     
         # Extract QA
         qa = []

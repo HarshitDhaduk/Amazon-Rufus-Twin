@@ -17,7 +17,7 @@ export default function AsinForm() {
   const [query, setQuery] = useState("");
   const [profileUrl, setProfileUrl] = useState("");
   const [includeMarket, setIncludeMarket] = useState(true);
-  const [includeCompetitors, setIncludeCompetitors] = useState(false);
+  const [includeCompetitors, setIncludeCompetitors] = useState(true);
   const [currency, setCurrency] = useState("INR");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -165,7 +165,10 @@ export default function AsinForm() {
           checked={includeCompetitors}
           onChange={(e) => setIncludeCompetitors(e.target.checked)}
         />
-        <span className={styles.toggleLabel}>Auto-discover and analyze competitors</span>
+        <span className={styles.toggleLabel}>
+          Auto-discover &amp; analyze competitors
+          <span className={styles.optionalTag}>recommended</span>
+        </span>
       </label>
 
       <div className={styles.currencyGroup}>
