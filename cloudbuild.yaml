@@ -8,9 +8,9 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA'
+      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend:$SHORT_SHA'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/rufus-backend:latest'
+      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend:latest'
       - './backend'
 
   - name: 'gcr.io/cloud-builders/docker'
@@ -19,7 +19,7 @@ steps:
     args:
       - 'push'
       - '--all-tags'
-      - 'gcr.io/$PROJECT_ID/rufus-backend'
+      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-backend'
@@ -34,7 +34,7 @@ steps:
       - '-c'
       - |
         gcloud run deploy rufus-backend \
-          --image=gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA \
+          --image=asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend:$SHORT_SHA \
           --region=${_REGION} \
           --platform=managed \
           --allow-unauthenticated \
@@ -76,8 +76,8 @@ steps:
         echo "Building frontend with NEXT_PUBLIC_API_URL=$$BACKEND_URL"
         docker build \
           --build-arg NEXT_PUBLIC_API_URL="$$BACKEND_URL" \
-          -t gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA \
-          -t gcr.io/$PROJECT_ID/rufus-frontend:latest \
+          -t asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend:$SHORT_SHA \
+          -t asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend:latest \
           ./frontend
 
   - name: 'gcr.io/cloud-builders/docker'
@@ -86,7 +86,7 @@ steps:
     args:
       - 'push'
       - '--all-tags'
-      - 'gcr.io/$PROJECT_ID/rufus-frontend'
+      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-frontend'
@@ -97,7 +97,7 @@ steps:
       - |
         BACKEND_URL=$(cat /workspace/backend_url.txt)
         gcloud run deploy rufus-frontend \
-          --image=gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA \
+          --image=asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend:$SHORT_SHA \
           --region=${_REGION} \
           --platform=managed \
           --allow-unauthenticated \
@@ -124,10 +124,10 @@ steps:
 
 # ── Persist tagged images ──────────────────────────────────────────────────────
 images:
-  - 'gcr.io/$PROJECT_ID/rufus-backend:$SHORT_SHA'
-  - 'gcr.io/$PROJECT_ID/rufus-backend:latest'
-  - 'gcr.io/$PROJECT_ID/rufus-frontend:$SHORT_SHA'
-  - 'gcr.io/$PROJECT_ID/rufus-frontend:latest'
+  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend:$SHORT_SHA'
+  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-backend:latest'
+  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend:$SHORT_SHA'
+  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/rufus-images/rufus-frontend:latest'
 
 # ── Substitution defaults (override in trigger UI) ────────────────────────────
 substitutions:
